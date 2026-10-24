@@ -18,7 +18,10 @@ fails the phase if the agent touched anything outside its allowlist.
 Comparing change-sets, rather than watching for writes, is what catches the
 `git checkout` case: a path that was modified before the agent ran and is clean
 afterwards has been reverted, and a reversion is a modification. Appearing,
-disappearing, and changing all count.
+disappearing, and changing all count — with one exemption: a path that was
+untracked and merely fell out of git's untracked listing (gitignored or staged
+by the agent's own authorized edit) is still on disk, untouched, and is not a
+change. Git's view shrank; the tree did not.
 
 A breach is NOT a gate violation. Gates are for work an agent can be asked to
 redo; a breach cannot be corrected by re-prompting, because the write already
@@ -68,10 +71,30 @@ def snapshot(run) -> dict[str, str]:
     return fingerprints
 
 
-def changed_paths(before: dict[str, str], after: dict[str, str]) -> list[str]:
-    """Every path whose state differs — appeared, vanished, or was rewritten."""
-    return sorted({p for p in set(before) | set(after)
-                   if before.get(p) != after.get(p)})
+def changed_paths(before: dict[str, str], after: dict[str, str],
+                  repo_root: Path | str) -> list[str]:
+    """Every path whose state differs — appeared, vanished, or was rewritten.
+
+    One exemption: a path untracked before and gone from git's listing after,
+    yet still present on disk, did not change. The usual cause is the agent's
+    own authorized edit gitignoring it (a builder told to ignore a path flips
+    every file under it from `untracked` to invisible in one `git status`), or
+    staging an unchanged file. Content and presence are untouched, so calling
+    that a modification would fail — and roll back — work that was done right.
+    A reverted TRACKED file earns no such exemption: it leaves `git diff HEAD`
+    while still on disk, and catching exactly that reversion is why the
+    fingerprints are compared at all.
+    """
+    root = Path(repo_root)
+    changed = set()
+    for path in set(before) | set(after):
+        if before.get(path) == after.get(path):
+            continue
+        if (path not in after and before.get(path) == "untracked"
+                and (root / path).exists()):
+            continue
+        changed.add(path)
+    return sorted(changed)
 
 
 def _glob(pattern: str) -> re.Pattern:
@@ -171,7 +194,7 @@ def enforce(run, phase, agent: AgentConfig, before: dict[str, str]) -> list[str]
     is rolled back before the phase dies. What it cannot undo, it names.
     """
     after = snapshot(run)
-    touched = changed_paths(before, after)
+    touched = changed_paths(before, after, run.repo_root)
     breaches = [p for p in touched if not permitted(p, agent, run.cfg)]
     if not breaches:
         return touched

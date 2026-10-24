@@ -40,17 +40,27 @@ def repo_root() -> Path:
     return Path.cwd().resolve()
 
 
-def commit_all(message: str) -> str:
-    """Stage the working tree and commit it. Returns the new short sha."""
+def commit_all(message: str, base_sha: str | None = None) -> str:
+    """Stage the working tree and commit it. Returns the landed short sha.
+
+    base_sha is HEAD as the run started. A clean tree with HEAD moved past
+    base_sha means the work already landed mid-run — a builder with bash can
+    run git itself — so the existing HEAD sha is returned and the phase passes
+    instead of failing a job that is done. Without a base_sha the old contract
+    holds and a clean tree raises: a chain that commits each work product
+    separately (adw_simple_sdlc) wants that failure, not a silent pass.
+    """
     if not is_repo():
         raise RuntimeError(
             "not a git repository — a commit phase needs one. Run `git init` in the "
             "repo root (and make a first commit) before running an ADW that commits.")
     _git("add", "-A")
-    if not _git("status", "--porcelain"):
-        raise RuntimeError("nothing to commit — the preceding phases changed no files")
-    _git("commit", "-m", message)
-    return _git("rev-parse", "--short", "HEAD")
+    if _git("status", "--porcelain"):
+        _git("commit", "-m", message)
+        return _git("rev-parse", "--short", "HEAD")
+    if base_sha and rev() != base_sha:
+        return short_sha()
+    raise RuntimeError("nothing to commit — the preceding phases changed no files")
 
 
 def changed_files() -> list[str]:
