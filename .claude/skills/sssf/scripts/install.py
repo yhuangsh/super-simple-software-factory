@@ -30,6 +30,11 @@ GITIGNORE_ENTRIES = [
     # first repo that was ever installed into from scratch.
     "__pycache__/",
     "*.pyc",
+    # Sandbox provision builds the visualizer inside the skill tree on the VM
+    # (bun install + vite build); without these a fresh repo fails setup's
+    # clean-tree gate on its first mount.
+    "node_modules/",
+    "dist/",
 ]
 
 
